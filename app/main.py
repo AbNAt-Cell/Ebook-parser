@@ -88,7 +88,7 @@ def process_book_task(book_id: str):
 
         supabase.table("books").update(update_data).eq("id", book_id).execute()
 
-        # Insert chapters
+        # Insert chapters and get their generated IDs
         if chapters:
             chapters_to_insert = []
             for ch in chapters:
@@ -100,8 +100,88 @@ def process_book_task(book_id: str):
                     "word_count": ch["word_count"]
                 })
             
-            # Batch insert chapters
-            supabase.table("chapters").insert(chapters_to_insert).execute()
+            # Batch insert chapters and return the inserted rows
+            chapters_res = supabase.table("chapters").insert(chapters_to_insert).execute()
+            inserted_chapters = chapters_res.data
+            
+            if inserted_chapters:
+                logger.info(f"Generating AI learning content for {len(inserted_chapters)} chapters...")
+                from app.parsers.ai_extractor import AIExtractor
+                extractor = AIExtractor()
+                
+                # Create a master flashcard deck for this book
+                user_id = book_data.get("user_id")
+                book_title = book_data.get("title", "Unknown Book")
+                
+                deck_res = supabase.table("flashcard_decks").insert({
+                    "user_id": user_id,
+                    "book_id": book_id,
+                    "title": f"Flashcards for {book_title}",
+                    "is_ai_generated": True,
+                    "card_count": 0
+                }).execute()
+                deck_id = deck_res.data[0]["id"] if deck_res.data else None
+                
+                # We'll batch these inserts as well
+                all_flashcards = []
+                all_quizzes = []
+                
+                for ch in inserted_chapters:
+                    chapter_id = ch["id"]
+                    learning_data = extractor.generate_learning_content(ch["title"], ch.get("content", ""))
+                    
+                    if learning_data:
+                        # Update chapter summary
+                        if "summary" in learning_data:
+                            supabase.table("chapters").update({"summary": learning_data["summary"]}).eq("id", chapter_id).execute()
+                            
+                        # Prepare flashcards
+                        if deck_id and "flashcards" in learning_data:
+                            for fc in learning_data["flashcards"]:
+                                all_flashcards.append({
+                                    "deck_id": deck_id,
+                                    "user_id": user_id,
+                                    "chapter_id": chapter_id,
+                                    "front": fc.get("front", ""),
+                                    "back": fc.get("back", ""),
+                                    "difficulty": fc.get("difficulty", "medium").lower()
+                                })
+                                
+                        # Prepare quiz
+                        if "quiz" in learning_data:
+                            # Insert quiz first to get its ID
+                            quiz_res = supabase.table("quizzes").insert({
+                                "user_id": user_id,
+                                "book_id": book_id,
+                                "chapter_id": chapter_id,
+                                "title": f"Quiz: {ch['title']}",
+                                "question_count": len(learning_data["quiz"]),
+                                "quiz_type": "multiple_choice",
+                                "difficulty": "medium",
+                                "is_ai_generated": True
+                            }).execute()
+                            
+                            if quiz_res.data:
+                                quiz_id = quiz_res.data[0]["id"]
+                                quiz_questions = []
+                                for idx, q in enumerate(learning_data["quiz"]):
+                                    quiz_questions.append({
+                                        "quiz_id": quiz_id,
+                                        "question_num": idx + 1,
+                                        "question_text": q.get("question", ""),
+                                        "question_type": "multiple_choice",
+                                        "options": q.get("options", []),
+                                        "correct_answer": q.get("correct_answer", ""),
+                                        "explanation": q.get("explanation", "")
+                                    })
+                                if quiz_questions:
+                                    supabase.table("quiz_questions").insert(quiz_questions).execute()
+                                    
+                # Batch insert all flashcards at the end
+                if all_flashcards:
+                    supabase.table("flashcards").insert(all_flashcards).execute()
+                    # Update card_count on the deck
+                    supabase.table("flashcard_decks").update({"card_count": len(all_flashcards)}).eq("id", deck_id).execute()
 
         logger.info(f"Successfully processed book {book_id}")
 

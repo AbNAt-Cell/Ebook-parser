@@ -126,3 +126,57 @@ class AIExtractor:
         except Exception as e:
             logger.error(f"Error during Gemini AI extraction: {e}")
             return []
+
+    def generate_learning_content(self, chapter_title: str, chapter_text: str) -> dict:
+        """
+        Generates summary, flashcards, and a quiz for a single chapter's text using Gemini.
+        """
+        if not self.client:
+            logger.warning("Gemini API key not configured. Skipping learning content generation.")
+            return {}
+
+        prompt = (
+            f"Analyze the following chapter titled '{chapter_title}'. "
+            "First, provide a comprehensive summary of the chapter's key events, themes, or arguments. "
+            "Second, create 5 intelligent flashcards to help a student memorize the most important concepts. Each flashcard should have a 'front' (question/prompt), a 'back' (answer), and a 'difficulty' level ('easy', 'medium', or 'hard'). "
+            "Third, create a 3-question multiple-choice quiz based on the chapter. Provide the question, 4 distinct options, the exact string of the correct_answer (which must exactly match one of the options), and a brief explanation of why it is correct. "
+            f"\n\nChapter Text:\n{chapter_text[:25000]}" # Limit text to avoid blowing up context if it's too huge, but 25k chars is very safe for 1.5 flash
+        )
+
+        try:
+            logger.info(f"Generating learning content for chapter: {chapter_title}")
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=AILearningContent,
+                    temperature=0.7,
+                ),
+            )
+            
+            result = response.text
+            import json
+            data = json.loads(result)
+            return data
+            
+        except Exception as e:
+            logger.error(f"Error generating learning content for {chapter_title}: {e}")
+            return {}
+
+class FlashcardModel(BaseModel):
+    front: str
+    back: str
+    difficulty: str
+
+class QuizQuestionModel(BaseModel):
+    question: str
+    options: list[str]
+    correct_answer: str
+    explanation: str
+
+class AILearningContent(BaseModel):
+    summary: str
+    flashcards: list[FlashcardModel]
+    quiz: list[QuizQuestionModel]
+
