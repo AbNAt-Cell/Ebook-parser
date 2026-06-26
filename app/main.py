@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ebook Parser Worker")
 
-class ProcessRequest(BaseModel):
-    book_id: str
 
 def update_book_status(book_id: str, status: str, error_msg: str = None):
     """Helper to update the processing status of a book."""
@@ -42,10 +40,10 @@ def process_book_task(book_id: str):
             raise ValueError(f"Book with id {book_id} not found.")
         
         book_data = book_response.data[0]
-        file_path = book_data.get("file_path")
+        file_path = book_data.get("file_url")
         
         if not file_path:
-            raise ValueError("file_path is empty.")
+            raise ValueError("file_url is empty.")
 
         logger.info(f"Downloading file: {file_path}")
 
@@ -117,15 +115,28 @@ def process_book_task(book_id: str):
             logger.info(f"Cleaned up temp file {temp_file_path}")
 
 
+class ProcessRequest(BaseModel):
+    type: str = None
+    table: str = None
+    record: Dict[str, Any] = None
+    book_id: str = None # fallback
+
 @app.post("/process", status_code=200)
 async def process_book(request: ProcessRequest, background_tasks: BackgroundTasks):
     """
     Webhook endpoint to trigger processing.
-    Returns 200 OK immediately and processes the book in the background.
+    Accepts Supabase Database Webhook payload or a direct {"book_id": "uuid"}.
     """
-    logger.info(f"Received request to process book: {request.book_id}")
-    background_tasks.add_task(process_book_task, request.book_id)
-    return {"message": "Processing started", "book_id": request.book_id}
+    book_id = request.book_id
+    if request.record and "id" in request.record:
+        book_id = request.record["id"]
+        
+    if not book_id:
+        raise HTTPException(status_code=400, detail="book_id or record.id is required")
+
+    logger.info(f"Received request to process book: {book_id}")
+    background_tasks.add_task(process_book_task, book_id)
+    return {"message": "Processing started", "book_id": book_id}
 
 @app.get("/health", status_code=200)
 async def health_check():
