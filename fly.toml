@@ -1,18 +1,23 @@
-app = "ebook-parser-worker"
-primary_region = "iad"
+# fly.toml app configuration file generated for ebook-parser on 2026-06-26T20:57:03Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'ebook-parser'
+primary_region = 'ams'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [http_service]
-  internal_port = 8000
+  internal_port = 8080
   force_https = true
-  auto_stop_machines = true
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
+  processes = ['app']
 
-[vm]
-  cpu_kind = "shared"
+[[vm]]
+  cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 1024 # 1GB recommended for parsing large files
+  memory_mb = 1024
