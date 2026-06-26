@@ -1,0 +1,9 @@
+fastapi==0.109.2
+uvicorn==0.27.1
+pydantic==2.6.1
+pydantic-settings==2.1.0
+supabase==2.3.4
+pymupdf==1.23.21
+EbookLib==0.18
+beautifulsoup4==4.12.3
+python-dotenv==1.0.1
