@@ -8,3 +8,4 @@ pymupdf
 EbookLib
 beautifulsoup4
 python-dotenv
+google-genai

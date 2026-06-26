@@ -1,9 +1,13 @@
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
+import logging
 from typing import List, Dict, Any, Tuple
 from app.parsers.base import BaseParser
 from app.config import settings
+from app.parsers.ai_extractor import AIExtractor
+
+logger = logging.getLogger(__name__)
 
 class EPUBParser(BaseParser):
     def parse(self, file_path: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
@@ -26,65 +30,54 @@ class EPUBParser(BaseParser):
             "page_count": 0  # EPUBs don't have standard page counts
         }
 
-        chapters = []
-        chapter_num = 1
-        
+        logger.info("Extracting raw text from EPUB...")
+        full_text = ""
         for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-            # Parse HTML content
             soup = BeautifulSoup(item.get_content(), 'html.parser')
+            full_text += soup.get_text(separator='\n') + "\n\n"
             
-            # Extract chapter title if available (from h1, h2, or title tag)
-            chapter_title = ""
-            heading = soup.find(['h1', 'h2', 'title'])
-            if heading:
-                chapter_title = heading.get_text().strip()
-            
-            if not chapter_title:
-                chapter_title = f"Chapter {chapter_num}"
+        if not full_text.strip():
+            logger.warning("Extracted EPUB text is empty.")
+            return metadata, []
 
-            content = soup.get_text(separator='\n').strip()
+        extractor = AIExtractor()
+        if settings.gemini_api_key:
+            logger.info("Using AIExtractor for EPUB chapter boundary detection.")
+            chapters = extractor.extract_chapters(full_text)
             
-            if not content:
-                continue
+            # If AIExtractor succeeds
+            if chapters:
+                final_chapters = []
+                chapter_num = 1
+                for ch in chapters:
+                    if ch["word_count"] > settings.max_chunk_words * 2:
+                        chunks = self.chunk_text(ch["content"], settings.max_chunk_words)
+                        for idx, chunk in enumerate(chunks):
+                            final_chapters.append({
+                                "chapter_num": chapter_num,
+                                "title": f"{ch['title']} (Part {idx + 1})",
+                                "content": chunk,
+                                "word_count": len(chunk.split())
+                            })
+                            chapter_num += 1
+                    else:
+                        ch["chapter_num"] = chapter_num
+                        final_chapters.append(ch)
+                        chapter_num += 1
+                return metadata, final_chapters
+        else:
+            logger.warning("No Gemini API Key found. Falling back to basic chunking.")
 
-            word_count = len(content.split())
-            
-            # Chunk if chapter is too long
-            if word_count > settings.max_chunk_words * 2:
-                chunks = self.chunk_text(content, settings.max_chunk_words)
-                for idx, chunk in enumerate(chunks):
-                    chapters.append({
-                        "chapter_num": chapter_num,
-                        "title": f"{chapter_title} (Part {idx + 1})",
-                        "content": chunk,
-                        "word_count": len(chunk.split())
-                    })
-                    chapter_num += 1
-            else:
-                chapters.append({
-                    "chapter_num": chapter_num,
-                    "title": chapter_title,
-                    "content": content,
-                    "word_count": word_count
-                })
-                chapter_num += 1
-
-        # Fallback if no valid chapters were found via ITEM_DOCUMENT (rare but possible)
-        if not chapters:
-            full_text = ""
-            for item in book.get_items():
-                if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                    soup = BeautifulSoup(item.get_content(), 'html.parser')
-                    full_text += soup.get_text(separator='\n') + "\n"
-            
-            if full_text.strip():
-                chunks = self.chunk_text(full_text, settings.max_chunk_words)
-                for idx, chunk in enumerate(chunks):
-                    chapters.append({
-                        "chapter_num": idx + 1,
-                        "title": f"Part {idx + 1}",
-                        "content": chunk,
-                        "word_count": len(chunk.split())
-                    })
+        # Fallback chunking if AI extraction fails or is disabled
+        logger.info("Falling back to standard EPUB chunking.")
+        chapters = []
+        chunks = self.chunk_text(full_text, settings.max_chunk_words)
+        for idx, chunk in enumerate(chunks):
+            chapters.append({
+                "chapter_num": idx + 1,
+                "title": f"Part {idx + 1}",
+                "content": chunk,
+                "word_count": len(chunk.split())
+            })
 
         return metadata, chapters
