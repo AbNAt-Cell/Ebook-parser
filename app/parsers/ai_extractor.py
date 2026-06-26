@@ -66,27 +66,46 @@ class AIExtractor:
                 
             logger.info(f"Gemini identified {len(result.chapters)} chapters. Attempting slicing.")
             
+            import re
+            
+            def find_quote(quote: str, text: str, start_pos: int = 0) -> int:
+                if not quote: return -1
+                words = [re.escape(w) for w in quote.split()]
+                if not words: return -1
+                pattern = r'\s+'.join(words)
+                match = re.search(pattern, text[start_pos:])
+                return start_pos + match.start() if match else -1
+            
             processed_chapters = []
             for ch in result.chapters:
                 # Find start
-                start_idx = full_text.find(ch.start_exact_quote)
+                start_idx = find_quote(ch.start_exact_quote, full_text)
                 if start_idx == -1:
-                    # Fallback to basic word splitting if exact match fails
+                    # Fallback to first few words
                     first_words = " ".join(ch.start_exact_quote.split()[:5])
-                    start_idx = full_text.find(first_words)
+                    start_idx = find_quote(first_words, full_text)
                     
                 # Find end
-                end_idx = full_text.find(ch.end_exact_quote, start_idx if start_idx != -1 else 0)
+                end_idx = find_quote(ch.end_exact_quote, full_text, start_idx if start_idx != -1 else 0)
                 if end_idx != -1:
-                    end_idx += len(ch.end_exact_quote)
+                    # To get the exact end of the matched quote, we re-search it or just add approx length
+                    match = re.search(r'\s+'.join([re.escape(w) for w in ch.end_exact_quote.split()]), full_text[end_idx:])
+                    if match:
+                        end_idx += match.end()
+                    else:
+                        end_idx += len(ch.end_exact_quote)
                 else:
                     # Fallback to last words
                     last_words = " ".join(ch.end_exact_quote.split()[-5:])
-                    end_idx = full_text.find(last_words, start_idx if start_idx != -1 else 0)
+                    end_idx = find_quote(last_words, full_text, start_idx if start_idx != -1 else 0)
                     if end_idx != -1:
-                        end_idx += len(last_words)
+                        match = re.search(r'\s+'.join([re.escape(w) for w in last_words.split()]), full_text[end_idx:])
+                        if match:
+                            end_idx += match.end()
+                        else:
+                            end_idx += len(last_words)
                 
-                # If we still can't find boundaries, skip or use what we can
+                # Slice content
                 if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                     content = full_text[start_idx:end_idx].strip()
                 elif start_idx != -1:
