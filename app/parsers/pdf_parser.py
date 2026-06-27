@@ -1,5 +1,8 @@
 import fitz  # PyMuPDF
 import logging
+import os
+import tempfile
+import logging
 from typing import List, Dict, Any, Tuple
 from app.parsers.base import BaseParser
 from app.config import settings
@@ -11,12 +14,25 @@ class PDFParser(BaseParser):
     def parse(self, file_path: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         doc = fitz.open(file_path)
         
+        # Extract Cover Image
+        cover_path = None
+        if doc.page_count > 0:
+            try:
+                page = doc.load_page(0)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # Higher resolution
+                fd, cover_path = tempfile.mkstemp(suffix=".png")
+                os.close(fd)
+                pix.save(cover_path)
+            except Exception as e:
+                logger.warning(f"Could not extract PDF cover: {e}")
+
         # Extract Metadata
         doc_meta = doc.metadata or {}
         metadata = {
             "title": doc_meta.get("title", ""),
             "author": doc_meta.get("author", ""),
-            "page_count": doc.page_count
+            "page_count": doc.page_count,
+            "cover_path": cover_path
         }
 
         logger.info("Extracting raw text from PDF...")

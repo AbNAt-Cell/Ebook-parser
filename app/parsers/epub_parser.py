@@ -1,5 +1,7 @@
 import ebooklib
 from ebooklib import epub
+import os
+import tempfile
 from bs4 import BeautifulSoup
 import logging
 from typing import List, Dict, Any, Tuple
@@ -24,10 +26,30 @@ class EPUBParser(BaseParser):
         if creators:
             author = creators[0][0]
 
+        # Extract Cover Image
+        cover_path = None
+        try:
+            # Check for cover image items
+            cover_items = [item for item in book.get_items() if item.get_type() == ebooklib.ITEM_COVER]
+            # If no explicit cover, just get the first image
+            if not cover_items:
+                cover_items = [item for item in book.get_items() if item.get_type() == ebooklib.ITEM_IMAGE]
+            
+            if cover_items:
+                cover_item = cover_items[0]
+                ext = ".jpg" if "jpeg" in cover_item.media_type or "jpg" in cover_item.media_type else ".png"
+                fd, cover_path = tempfile.mkstemp(suffix=ext)
+                os.close(fd)
+                with open(cover_path, "wb") as f:
+                    f.write(cover_item.get_content())
+        except Exception as e:
+            logger.warning(f"Could not extract EPUB cover: {e}")
+
         metadata = {
             "title": title,
             "author": author,
-            "page_count": 0  # EPUBs don't have standard page counts
+            "page_count": 0,  # EPUBs don't have standard page counts
+            "cover_path": cover_path
         }
 
         logger.info("Extracting raw text from EPUB...")

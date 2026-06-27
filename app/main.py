@@ -86,6 +86,33 @@ def process_book_task(book_id: str):
         if metadata.get("title") and not book_data.get("title"):
             update_data["title"] = metadata.get("title")
 
+        # Handle cover upload if we extracted one
+        cover_path = metadata.get("cover_path")
+        if cover_path and os.path.exists(cover_path):
+            try:
+                user_id = book_data.get("user_id")
+                ext = os.path.splitext(cover_path)[1].lower()
+                storage_path = f"{user_id}/{book_id}{ext}"
+                with open(cover_path, "rb") as f:
+                    # Depending on python client version, upload takes bytes
+                    supabase.storage.from_("book-covers").upload(
+                        file_options={"upsert": "true", "content-type": "image/png" if ext == ".png" else "image/jpeg"},
+                        path=storage_path,
+                        file=f.read()
+                    )
+                
+                # Get public url
+                public_url = supabase.storage.from_("book-covers").get_public_url(storage_path)
+                update_data["cover_url"] = public_url
+                logger.info(f"Cover uploaded to {public_url}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to upload cover image: {e}")
+            finally:
+                # Cleanup cover file
+                if os.path.exists(cover_path):
+                    os.remove(cover_path)
+
         supabase.table("books").update(update_data).eq("id", book_id).execute()
 
         # Insert chapters and get their generated IDs
